@@ -284,35 +284,59 @@
         });
 
         sendPromptBtn.addEventListener('click', async () => {
-            const p = promptInput.value;
-            if (!p) return;
+            const seed = promptInput.value;
+            if (!seed) return;
+            
+            sendPromptBtn.disabled = true;
+            logTo(heliosLog, `Expanding prompt using Gemini engine...`);
+            logTo(memflowLog, `Expanding prompt using Gemini engine...`);
 
-            // Send to Helios
-            if (heliosRoom && heliosRoom.state === 'connected') {
-                try {
-                    const encoder = new TextEncoder();
-                    const data = encoder.encode(p);
-                    await heliosRoom.localParticipant.publishData(data, LivekitClient.DataPacket_Kind.RELIABLE, { topic: 'prompt' });
-                    logTo(heliosLog, `Sent prompt: ${p}`);
-                } catch (e) {
-                    logTo(heliosLog, `Prompt error: ${e.message}`, true);
-                }
-            }
+            try {
+                const response = await fetch('/api/expand', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seed: seed })
+                });
+                if (!response.ok) throw new Error('Expansion failed');
+                
+                const data = await response.json();
+                const p = data.expanded || seed;
+                
+                logTo(heliosLog, `Expanded: ${p}`);
+                logTo(memflowLog, `Expanded: ${p}`);
 
-            // Send to Memflow
-            if (memflowDataChannel && memflowDataChannel.readyState === 'open') {
-                try {
-                    const payload = JSON.stringify({ 
-                        prompt: p,
-                        prompts: [{ text: p, weight: 100.0 }],
-                        reset_cache: true,
-                        vace_enabled: false // ensure race condition handled
-                    });
-                    memflowDataChannel.send(payload);
-                    logTo(memflowLog, `Sent prompt: ${p}`);
-                } catch (e) {
-                    logTo(memflowLog, `Prompt error: ${e.message}`, true);
+                // Send to Helios
+                if (heliosRoom && heliosRoom.state === 'connected') {
+                    try {
+                        const encoder = new TextEncoder();
+                        const p_data = encoder.encode(p);
+                        await heliosRoom.localParticipant.publishData(p_data, LivekitClient.DataPacket_Kind.RELIABLE, { topic: 'prompt' });
+                        logTo(heliosLog, `Sent prompt to Helios`);
+                    } catch (e) {
+                        logTo(heliosLog, `Prompt error: ${e.message}`, true);
+                    }
                 }
+
+                // Send to Memflow
+                if (memflowDataChannel && memflowDataChannel.readyState === 'open') {
+                    try {
+                        const payload = JSON.stringify({ 
+                            prompt: p,
+                            prompts: [{ text: p, weight: 100.0 }],
+                            reset_cache: true,
+                            vace_enabled: false // ensure race condition handled
+                        });
+                        memflowDataChannel.send(payload);
+                        logTo(memflowLog, `Sent prompt to Memflow`);
+                    } catch (e) {
+                        logTo(memflowLog, `Prompt error: ${e.message}`, true);
+                    }
+                }
+            } catch (err) {
+                logTo(heliosLog, `Error: ${err.message}`, true);
+                logTo(memflowLog, `Error: ${err.message}`, true);
+            } finally {
+                sendPromptBtn.disabled = false;
             }
         });
     </script>
