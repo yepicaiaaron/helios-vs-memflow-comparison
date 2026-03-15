@@ -1,4 +1,4 @@
 aiohttp
-livekit
+livekit-api
 websockets
 gunicorn
