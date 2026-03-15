@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Helios vs Memflow/Rife Comparison</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 1400px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        h1 {
+            color: #bb86fc;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+        .video-row {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+            justify-content: space-between;
+        }
+        .video-container {
+            flex: 1;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .video-display {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #888;
+            position: relative;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background-color: #2a2a2a;
+            color: #e0e0e0;
+            font-size: 1em;
+            min-width: 300px;
+        }
+        button {
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            background-color: #03dac6;
+            color: #121212;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #03a89e;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        .status-log {
+            background-color: #121212;
+            border: 1px solid #333;
+            border-radius: 5px;
+            padding: 10px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.85em;
+            color: #bbb;
+            width: 100%;
+            margin-top: 10px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Helios vs Memflow/Rife Side-by-Side</h1>
+
+        <div class="controls">
+            <input type="text" id="promptInput" placeholder="Enter prompt for both models...">
+            <button id="connectBtn">Connect Both Streams</button>
+            <button id="sendPromptBtn" disabled>Send Prompt</button>
+        </div>
+        
+        <div class="video-row">
+            <!-- Helios Section -->
+            <div class="video-container">
+                <h3 style="color: #03dac6;">Helios (14B) - LiveKit</h3>
+                <div class="video-display" id="helios-display">
+                    <span id="helios-placeholder">Ready to connect...</span>
+                </div>
+                <div class="status-log" id="helios-log"></div>
+            </div>
+
+            <!-- Memflow Section -->
+            <div class="video-container">
+                <h3 style="color: #ff5252;">Memflow+Rife - WebRTC Proxy</h3>
+                <div class="video-display" id="memflow-display">
+                    <video id="memflow-video" autoplay playsinline muted></video>
+                    <span id="memflow-placeholder">Ready to connect...</span>
+                </div>
+                <div class="status-log" id="memflow-log"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // UI Elements
+        const promptInput = document.getElementById('promptInput');
+        const connectBtn = document.getElementById('connectBtn');
+        const sendPromptBtn = document.getElementById('sendPromptBtn');
+
+        const heliosDisplay = document.getElementById('helios-display');
+        const heliosPlaceholder = document.getElementById('helios-placeholder');
+        const heliosLog = document.getElementById('helios-log');
+
+        const memflowVideo = document.getElementById('memflow-video');
+        const memflowPlaceholder = document.getElementById('memflow-placeholder');
+        const memflowLog = document.getElementById('memflow-log');
+
+        // Helios LiveKit Vars
+        const LK_URL = '__URL__';
+        const LK_TOKEN = '__TOKEN__';
+        let heliosRoom = null;
+
+        // Memflow WebRTC Vars
+        const SCOPE_API_BASE = 'https://daydream-scope-proxy.onrender.com';
+        const SCOPE_WEBRTC_OFFER_ENDPOINT = `${SCOPE_API_BASE}/api/v1/webrtc/offer`;
+        let memflowPC = null;
+        let memflowDataChannel = null;
+
+        function logTo(element, message, isError = false) {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            entry.style.color = isError ? '#ff5252' : '#e0e0e0';
+            element.prepend(entry);
+        }
+
+        // --- Helios Connection ---
+        async function connectHelios() {
+            logTo(heliosLog, 'Connecting to LiveKit room...');
+            heliosRoom = new LivekitClient.Room();
+
+            heliosRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+                if (track.kind === 'video') {
+                    logTo(heliosLog, 'Video track received!');
+                    heliosPlaceholder.style.display = 'none';
+                    const element = track.attach();
+                    element.style.width = '100%';
+                    element.style.height = '100%';
+                    element.style.objectFit = 'contain';
+                    element.muted = true;
+                    element.setAttribute('playsinline', '');
+                    heliosDisplay.appendChild(element);
+                }
+            });
+
+            heliosRoom.on(LivekitClient.RoomEvent.Disconnected, () => {
+                logTo(heliosLog, 'Disconnected.');
+            });
+
+            try {
+                await heliosRoom.connect(LK_URL, LK_TOKEN);
+                logTo(heliosLog, 'Successfully connected to LiveKit!');
+            } catch (e) {
+                logTo(heliosLog, `Failed: ${e.message}`, true);
+            }
+        }
+
+        // --- Memflow Connection ---
+        async function connectMemflow() {
+            logTo(memflowLog, 'Connecting to WebRTC Proxy...');
+            if (memflowPC) memflowPC.close();
+
+            memflowPC = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
+
+            memflowPC.ontrack = (event) => {
+                logTo(memflowLog, 'Video track received!');
+                if (memflowVideo.srcObject !== event.streams[0]) {
+                    memflowVideo.srcObject = event.streams[0];
+                    memflowPlaceholder.style.display = 'none';
+                    memflowVideo.style.display = 'block';
+                }
+            };
+
+            memflowPC.addTransceiver('video', { direction: 'sendrecv' });
+            memflowPC.addTransceiver('audio', { direction: 'recvonly' });
+            
+            memflowDataChannel = memflowPC.createDataChannel("parameters", {ordered: true});
+            memflowDataChannel.onopen = () => logTo(memflowLog, "Data channel opened!");
+
+            const offer = await memflowPC.createOffer();
+            await memflowPC.setLocalDescription(offer);
+
+            await new Promise((resolve) => {
+                if (memflowPC.iceGatheringState === 'complete') return resolve();
+                const check = () => {
+                    if (memflowPC.iceGatheringState === 'complete') {
+                        memflowPC.removeEventListener('icegatheringstatechange', check);
+                        resolve();
+                    }
+                };
+                memflowPC.addEventListener('icegatheringstatechange', check);
+                setTimeout(() => { memflowPC.removeEventListener('icegatheringstatechange', check); resolve(); }, 3000);
+            });
+
+            const payload = { 
+                sdp: memflowPC.localDescription.sdp, 
+                type: 'offer',
+                initialParameters: {
+                    pipeline_ids: ["memflow", "flashvsr", "rife"], // requested memflow + rife
+                    input_mode: "text",
+                    prompts: [{ text: "A cinematic landscape", weight: 100.0 }],
+                    vace_enabled: false, // Important for stability per our history
+                    manage_cache: true
+                }
+            };
+
+            try {
+                const response = await fetch(SCOPE_WEBRTC_OFFER_ENDPOINT, {
+                    method: 'POST', 
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const answer = await response.json();
+                logTo(memflowLog, 'Server Answer received');
+                await memflowPC.setRemoteDescription(new RTCSessionDescription(answer));
+            } catch (e) {
+                logTo(memflowLog, `Failed: ${e.message}`, true);
+            }
+        }
+
+        connectBtn.addEventListener('click', () => {
+            connectBtn.disabled = true;
+            sendPromptBtn.disabled = false;
+            connectHelios();
+            connectMemflow();
+        });
+
+        sendPromptBtn.addEventListener('click', async () => {
+            const p = promptInput.value;
+            if (!p) return;
+
+            // Send to Helios
+            if (heliosRoom && heliosRoom.state === 'connected') {
+                try {
+                    const encoder = new TextEncoder();
+                    const data = encoder.encode(p);
+                    await heliosRoom.localParticipant.publishData(data, LivekitClient.DataPacket_Kind.RELIABLE, { topic: 'prompt' });
+                    logTo(heliosLog, `Sent prompt: ${p}`);
+                } catch (e) {
+                    logTo(heliosLog, `Prompt error: ${e.message}`, true);
+                }
+            }
+
+            // Send to Memflow
+            if (memflowDataChannel && memflowDataChannel.readyState === 'open') {
+                try {
+                    const payload = JSON.stringify({ 
+                        prompt: p,
+                        prompts: [{ text: p, weight: 100.0 }],
+                        reset_cache: true,
+                        vace_enabled: false // ensure race condition handled
+                    });
+                    memflowDataChannel.send(payload);
+                    logTo(memflowLog, `Sent prompt: ${p}`);
+                } catch (e) {
+                    logTo(memflowLog, `Prompt error: ${e.message}`, true);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
