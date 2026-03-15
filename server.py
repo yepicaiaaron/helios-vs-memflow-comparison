@@ -43,4 +43,4 @@ app.router.add_post('/api/expand', handle_expand_prompt)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8081))
-    web.run_app(app, port=port)
+    web.run_app(app, host='0.0.0.0', port=port)
